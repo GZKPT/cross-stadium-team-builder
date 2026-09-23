@@ -1,6 +1,7 @@
 
 import { savePokemon, saveTeam, listPokemon, listTeams } from './store.js';
 import { speciesTypes, typeDamage } from './type-analysis-data.js';
+import { typeMark, TYPE_DISPLAY_ORDER } from './type-icons.js';
 
 (()=>{const D=window.APP_DATA,$=id=>document.getElementById(id),ids=v=>String(v||'').toLowerCase().replace(/♀/g,'f').replace(/♂/g,'m').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');let active=0,team=[];const clone=x=>JSON.parse(JSON.stringify(x)),group=()=>D.groups.find(g=>g.key===$('cup').value),name=id=>D.species[id]||`ID ${id}`,move=id=>D.moves[id]||D.moves[0];
 function category(type){return[0,1,2,3,4,5,6,7,8,16].includes(type)?'Fisica':'Speciale'}function legalMoves(speciesId,current){const key=D.legal.byDex[String(speciesId)],set=new Set(D.legal.species[key]?.moves||[]);return D.moves.filter(m=>m.id===current||set.has(ids(m.name)))}
@@ -11,33 +12,35 @@ function multiplier(attackType,defenseTypes){return defenseTypes.reduce((value,t
 function multiplierLabel(value){return({0:'0×',0.25:'¼×',0.5:'½×',1:'1×',2:'2×',4:'4×',8:'8×'})[value]||`${value}×`}
 function effectClass(value){return value===0?'effect-immune':value>1?'effect-weak':value<1?'effect-resist':'effect-neutral'}
 function strongestAttack(p,targetType){return p.moves.map(id=>move(id)).filter(m=>m.power>0||/deals set damage/i.test(m.description||'')).map(m=>({move:m,type:D.types[m.type],value:typeDamage[targetType]?.[D.types[m.type]]??1,stab:pokemonTypes(p).includes(D.types[m.type])})).filter(entry=>entry.type).sort((a,b)=>b.value-a.value||Number(b.stab)-Number(a.stab))[0]||null}
+function tallyGrid(mode){return TYPE_DISPLAY_ORDER.map(type=>{const marks=team.map((p,i)=>{if(mode==='defense'){const value=multiplier(type,pokemonTypes(p)),kind=value>1?'weak':value<1?'good':'neutral';return `<span class="tally-mark tally-${kind}" title="Slot ${i+1} · ${name(p.species)}: ${multiplierLabel(value)} contro ${type}" aria-label="Slot ${i+1}: ${multiplierLabel(value)}"></span>`}const attack=strongestAttack(p,type),kind=attack&&attack.value>1?'good':'neutral',label=attack?`${attack.move.name}${attack.stab?' · STAB':''}, ${multiplierLabel(attack.value)}`:'nessuna mossa danno';return `<span class="tally-mark tally-${kind}" title="Slot ${i+1} · ${name(p.species)}: ${label} contro ${type}" aria-label="Slot ${i+1}: ${label}"></span>`}).join('');return `<div class="type-tally" role="listitem"><div class="type-tally-head">${typeMark(type,false)}<span>${type}</span></div><div class="tally-bars" aria-label="Slot squadra da 1 a 6">${marks}</div></div>`}).join('')}
 function renderAnalysis(){
-  const headers=team.map((p,i)=>`<th scope="col"><span>${i+1}. ${name(p.species)}</span><small>${pokemonTypes(p).join(' / ')||'Tipo non disponibile'}</small></th>`).join('');
+  const headers=team.map((p,i)=>`<th scope="col"><span>${i+1}. ${name(p.species)}</span><small class="type-badges">${pokemonTypes(p).map(type=>typeMark(type,true)).join('')||'Tipo non disponibile'}</small></th>`).join('');
   const tableHead=label=>`<tr><th scope="col">${label}</th>${headers}<th scope="col">Riepilogo</th></tr>`;
   $('defenseHead').innerHTML=tableHead('Tipo d’attacco');$('offenseHead').innerHTML=tableHead('Tipo bersaglio');
-  const defense=D.types.map(attackType=>{
+  $('defenseGraphic').innerHTML=tallyGrid('defense');$('offenseGraphic').innerHTML=tallyGrid('offense');
+  const defense=TYPE_DISPLAY_ORDER.map(attackType=>{
     const values=team.map(p=>multiplier(attackType,pokemonTypes(p)));
     const weak=values.filter(value=>value>1).length,resist=values.filter(value=>value>0&&value<1).length,immune=values.filter(value=>value===0).length;
     const cells=values.map((value,i)=>`<td><span class="effect-badge ${effectClass(value)}" aria-label="${name(team[i].species)}: ${multiplierLabel(value)}">${multiplierLabel(value)}</span></td>`).join('');
-    return `<tr><th scope="row">${attackType}</th>${cells}<td class="team-balance"><span class="weak-count">${weak} deboli</span><span class="resist-count">${resist} resistono</span><span class="immune-count">${immune} immuni</span></td></tr>`;
+     return `<tr><th scope="row"><span class="table-type-label">${typeMark(attackType,true)}</span></th>${cells}<td class="team-balance"><span class="weak-count">${weak} deboli</span><span class="resist-count">${resist} resistono</span><span class="immune-count">${immune} immuni</span></td></tr>`;
   }).join('');
   $('defenseRows').innerHTML=defense;
-  const threatRows=D.types.map(attackType=>({type:attackType,count:team.filter(p=>multiplier(attackType,pokemonTypes(p))>1).length}));
+  const threatRows=TYPE_DISPLAY_ORDER.map(attackType=>({type:attackType,count:team.filter(p=>multiplier(attackType,pokemonTypes(p))>1).length}));
   const sharedThreats=threatRows.filter(row=>row.count>1);
   $('defenseSummary').textContent=sharedThreats.length?`Debolezze condivise: ${sharedThreats.map(row=>`${row.type} (${row.count})`).join(' · ')}.`:'Nessun tipo d’attacco crea una debolezza condivisa.';
-  const offense=D.types.map(targetType=>{
+  const offense=TYPE_DISPLAY_ORDER.map(targetType=>{
     const attacks=team.map(p=>strongestAttack(p,targetType));
     const count=attacks.filter(entry=>entry&&entry.value>1).length;
     const cells=attacks.map((entry,i)=>entry?`<td><span class="offense-matchup"><span class="effect-badge ${effectClass(entry.value)}" aria-label="${name(team[i].species)}: ${multiplierLabel(entry.value)} contro ${targetType}">${multiplierLabel(entry.value)}</span><small>${entry.move.name}${entry.stab?' · STAB':''}</small></span></td>`:'<td><span class="no-matchup">—</span></td>').join('');
-    return `<tr><th scope="row">${targetType}</th>${cells}<td class="team-balance"><span class="${count?'resist-count':'weak-count'}">${count}/6 Pokémon</span></td></tr>`;
+     return `<tr><th scope="row"><span class="table-type-label">${typeMark(targetType,true)}</span></th>${cells}<td class="team-balance"><span class="${count?'resist-count':'weak-count'}">${count}/6 Pokémon</span></td></tr>`;
   }).join('');
   $('offenseRows').innerHTML=offense;
-  const covered=D.types.filter(targetType=>team.some(p=>{const attack=strongestAttack(p,targetType);return attack&&attack.value>1;}));
-  const uncovered=D.types.filter(type=>!covered.includes(type));
-  $('offenseSummary').textContent=`Mosse superefficaci contro ${covered.length} tipi su ${D.types.length}.${uncovered.length?` Senza copertura superefficace: ${uncovered.join(', ')}.`:''}`;
+  const covered=TYPE_DISPLAY_ORDER.filter(targetType=>team.some(p=>{const attack=strongestAttack(p,targetType);return attack&&attack.value>1;}));
+  const uncovered=TYPE_DISPLAY_ORDER.filter(type=>!covered.includes(type));
+  $('offenseSummary').textContent=`Mosse superefficaci contro ${covered.length} tipi su ${TYPE_DISPLAY_ORDER.length}.${uncovered.length?` Senza copertura superefficace: ${uncovered.join(', ')}.`:''}`;
 }
-function renderTeam(){ $('team').innerHTML=team.map((p,i)=>`<button class="slot${i===active?' active':''}" data-slot="${i}"><img src="${D.artwork[p.species]}" alt=""><span><strong>${i+1}. ${name(p.species)}</strong><small>Lv. ${p.level}<br>${p.moves.map(x=>move(x).name).join(' · ')}</small></span></button>`).join('');document.querySelectorAll('.slot').forEach(b=>b.onclick=()=>{active=+b.dataset.slot;render()});renderAnalysis()}
-function option(id,label){return `<option value="${id}">${String(id+1).padStart(3,'0')} - ${label}</option>`}function render(){const p=team[active],g=group();$('editTitle').textContent=`Slot ${active+1} - ${name(p.species)}`;$('hero').src=D.artwork[p.species];$('hero').alt=name(p.species);$('baseRental').innerHTML=g.rentals.map((r,i)=>option(i,name(r.species))).join('');$('baseRental').value=String(p.sourceIndex);$('speciesCombo').value=`${p.species} - ${name(p.species)}`;for(const [id,val] of Object.entries({level:p.level,experience:p.experience,ivAtk:p.ivs.atk,ivDef:p.ivs.def,ivSpe:p.ivs.spe,ivSpc:p.ivs.spc,seHp:p.statExp.hp,seAtk:p.statExp.atk,seDef:p.statExp.def,seSpe:p.statExp.spe,seSpc:p.statExp.spc}))$(id).value=val;$('moves').innerHTML=p.moves.map((mid,i)=>{const opts=legalMoves(p.species,mid).map(m=>`<option value="${m.id}"${m.id===mid?' selected':''}>${m.id} - ${m.name}</option>`).join(''),m=move(mid),acc=m.accuracy===255?100:Math.round(m.accuracy*100/255);return `<div class="move-card"><label>Mossa ${i+1}<select data-move="${i}">${opts}</select></label><div class="move-meta">${D.types[m.type]||'Tipo '+m.type} · ${category(m.type)} · Pot. ${m.power||'-'} · Prec. ${acc}% · PP ${m.pp}<br>${m.description||'Nessuna descrizione effetto disponibile.'}</div></div>`}).join('');document.querySelectorAll('[data-move]').forEach(s=>s.onchange=()=>{const i=+s.dataset.move,id=+s.value,ups=Number(p.pp?.[i]?.ups);p.moves[i]=id;p.pp[i]={ups:Number.isFinite(ups)?ups:3,current:Math.min(63,Math.floor(move(id).pp*(5+(Number.isFinite(ups)?ups:3))/5))};render()});calculate();renderTeam()}
+function renderTeam(){ $('team').innerHTML=team.map((p,i)=>`<button class="slot${i===active?' active':''}" data-slot="${i}"><img src="${D.artwork[p.species]}" alt=""><span class="slot-info"><strong>${i+1}. ${name(p.species)}</strong><small>Lv. ${p.level}</small><span class="type-badges">${pokemonTypes(p).map(type=>typeMark(type,true)).join('')}</span><small>${p.moves.map(x=>move(x).name).join(' · ')}</small></span></button>`).join('');document.querySelectorAll('.slot').forEach(b=>b.onclick=()=>{active=+b.dataset.slot;render()});renderAnalysis()}
+function option(id,label){return `<option value="${id}">${String(id+1).padStart(3,'0')} - ${label}</option>`}function render(){const p=team[active],g=group();$('editTitle').textContent=`Slot ${active+1} - ${name(p.species)}`;$('hero').src=D.artwork[p.species];$('hero').alt=name(p.species);$('editTypes').innerHTML=pokemonTypes(p).map(type=>typeMark(type,true)).join('');$('baseRental').innerHTML=g.rentals.map((r,i)=>option(i,name(r.species))).join('');$('baseRental').value=String(p.sourceIndex);$('speciesCombo').value=`${p.species} - ${name(p.species)}`;for(const [id,val] of Object.entries({level:p.level,experience:p.experience,ivAtk:p.ivs.atk,ivDef:p.ivs.def,ivSpe:p.ivs.spe,ivSpc:p.ivs.spc,seHp:p.statExp.hp,seAtk:p.statExp.atk,seDef:p.statExp.def,seSpe:p.statExp.spe,seSpc:p.statExp.spc}))$(id).value=val;$('moves').innerHTML=p.moves.map((mid,i)=>{const opts=legalMoves(p.species,mid).map(m=>`<option value="${m.id}"${m.id===mid?' selected':''}>${m.id} - ${m.name}</option>`).join(''),m=move(mid),acc=m.accuracy===255?100:Math.round(m.accuracy*100/255),type=D.types[m.type]||'Tipo '+m.type;return `<div class="move-card"><label>Mossa ${i+1}<select data-move="${i}">${opts}</select></label><div class="move-meta"><span class="move-type-line">${typeMark(type,true)}<span>${category(m.type)} · Pot. ${m.power||'-'} · Prec. ${acc}% · PP ${m.pp}</span></span><br>${m.description||'Nessuna descrizione effetto disponibile.'}</div></div>`}).join('');document.querySelectorAll('[data-move]').forEach(s=>s.onchange=()=>{const i=+s.dataset.move,id=+s.value,ups=Number(p.pp?.[i]?.ups);p.moves[i]=id;p.pp[i]={ups:Number.isFinite(ups)?ups:3,current:Math.min(63,Math.floor(move(id).pp*(5+(Number.isFinite(ups)?ups:3))/5))};render()});calculate();renderTeam()}
 function resetCup(){team=group().rentals.slice(0,6).map(clone);active=0;render()}
 $("toggleAnalysis").onclick=()=>{const visible=$("teamAnalysis").hidden;$("teamAnalysis").hidden=!visible;$("toggleAnalysis").setAttribute('aria-expanded',String(visible));$("toggleAnalysis").textContent=visible?'Nascondi analisi':'Mostra analisi';if(visible)renderAnalysis()};
 function commitSpecies(){const m=$('speciesCombo').value.match(/^(\d{1,3})/),id=+(m?.[1]||0);if(id<1||id>151){$('speciesCombo').value=`${team[active].species} - ${name(team[active].species)}`;return}team[active].species=id;render()}
@@ -120,9 +123,19 @@ function renderLibrary() {
     avatar.alt = '';
     detail.append(title, meta);
     if (library.tab === 'pokemon') {
-      const moves = document.createElement('p');
-      moves.textContent = record.pokemon.moves.map(id => move(id).name).join(' · ');
-      detail.append(moves);
+      const typing = document.createElement('div');
+      typing.className = 'type-badges library-types';
+      typing.innerHTML = pokemonTypes(record.pokemon).map(type => typeMark(type, true)).join('');
+      const moves = document.createElement('div');
+      moves.className = 'saved-moves';
+      for (const id of record.pokemon.moves) {
+        const entry = move(id), label = document.createElement('span');
+        label.className = 'saved-move';
+        label.innerHTML = typeMark(D.types[entry.type], false);
+        label.append(document.createTextNode(entry.name));
+        moves.append(label);
+      }
+      detail.append(typing, moves);
       actions.append(itemButton(`Metti nello slot ${active + 1}`, () => addPokemon(record)));
       card.draggable = true;
       card.title = 'Trascina su uno slot della squadra';
@@ -132,6 +145,19 @@ function renderLibrary() {
       });
       card.addEventListener('dragend', () => $('drawerBackdrop').classList.remove('dragging'));
     } else {
+      const roster = document.createElement('div');
+      roster.className = 'saved-roster';
+      for (const pokemon of record.pokemon) {
+        const row = document.createElement('div'), label = document.createElement('span'), typing = document.createElement('span');
+        row.className = 'saved-roster-item';
+        label.className = 'saved-roster-name';
+        label.textContent = name(pokemon.species);
+        typing.className = 'type-badges';
+        typing.innerHTML = pokemonTypes(pokemon).map(type => typeMark(type, false)).join('');
+        row.append(label, typing);
+        roster.append(row);
+      }
+      detail.append(roster);
       actions.append(itemButton('Carica squadra', () => loadTeam(record)));
     }
     detail.append(actions);
