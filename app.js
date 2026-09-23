@@ -1,13 +1,45 @@
 
 import { savePokemon, saveTeam, listPokemon, listTeams } from './store.js';
+import { speciesTypes, typeDamage } from './type-analysis-data.js';
 
 (()=>{const D=window.APP_DATA,$=id=>document.getElementById(id),ids=v=>String(v||'').toLowerCase().replace(/♀/g,'f').replace(/♂/g,'m').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');let active=0,team=[];const clone=x=>JSON.parse(JSON.stringify(x)),group=()=>D.groups.find(g=>g.key===$('cup').value),name=id=>D.species[id]||`ID ${id}`,move=id=>D.moves[id]||D.moves[0];
 function category(type){return[0,1,2,3,4,5,6,7,8,16].includes(type)?'Fisica':'Speciale'}function legalMoves(speciesId,current){const key=D.legal.byDex[String(speciesId)],set=new Set(D.legal.species[key]?.moves||[]);return D.moves.filter(m=>m.id===current||set.has(ids(m.name)))}
 function statBonus(v){return Math.floor(Math.min(255,Math.ceil(Math.sqrt(Math.max(0,v))))/4)}function stat(base,dv,se,l,hp=false){return Math.min(999,Math.floor((((base+dv)*2+statBonus(se))*l)/100)+(hp?l+10:5))}
 function statsFor(p){const key=D.legal.byDex[String(p.species)],b=D.legal.species[key]?.baseStats;if(!b)return{hp:0,atk:0,def:0,spe:0,spc:0};const hp=((p.ivs.atk&1)*8)+((p.ivs.def&1)*4)+((p.ivs.spe&1)*2)+(p.ivs.spc&1),l=p.level;return{hp:stat(b.hp,hp,p.statExp.hp,l,true),atk:stat(b.atk,p.ivs.atk,p.statExp.atk,l),def:stat(b.def,p.ivs.def,p.statExp.def,l),spe:stat(b.spe,p.ivs.spe,p.statExp.spe,l),spc:stat(b.spc,p.ivs.spc,p.statExp.spc,l)}}function calculate(){const p=team[active];p.stats=statsFor(p);for(const k of ['Hp','Atk','Def','Spe','Spc'])$(`st${k}`).value=p.stats[k.toLowerCase()]}
-function renderTeam(){ $('team').innerHTML=team.map((p,i)=>`<button class="slot${i===active?' active':''}" data-slot="${i}"><img src="${D.artwork[p.species]}" alt=""><span><strong>${i+1}. ${name(p.species)}</strong><small>Lv. ${p.level}<br>${p.moves.map(x=>move(x).name).join(' · ')}</small></span></button>`).join('');document.querySelectorAll('.slot').forEach(b=>b.onclick=()=>{active=+b.dataset.slot;render()})}
+function pokemonTypes(p){return speciesTypes[p.species]||[]}
+function multiplier(attackType,defenseTypes){return defenseTypes.reduce((value,type)=>value*(typeDamage[type]?.[attackType]??1),1)}
+function multiplierLabel(value){return({0:'0×',0.25:'¼×',0.5:'½×',1:'1×',2:'2×',4:'4×',8:'8×'})[value]||`${value}×`}
+function effectClass(value){return value===0?'effect-immune':value>1?'effect-weak':value<1?'effect-resist':'effect-neutral'}
+function strongestAttack(p,targetType){return p.moves.map(id=>move(id)).filter(m=>m.power>0||/deals set damage/i.test(m.description||'')).map(m=>({move:m,type:D.types[m.type],value:typeDamage[targetType]?.[D.types[m.type]]??1,stab:pokemonTypes(p).includes(D.types[m.type])})).filter(entry=>entry.type).sort((a,b)=>b.value-a.value||Number(b.stab)-Number(a.stab))[0]||null}
+function renderAnalysis(){
+  const headers=team.map((p,i)=>`<th scope="col"><span>${i+1}. ${name(p.species)}</span><small>${pokemonTypes(p).join(' / ')||'Tipo non disponibile'}</small></th>`).join('');
+  const tableHead=label=>`<tr><th scope="col">${label}</th>${headers}<th scope="col">Riepilogo</th></tr>`;
+  $('defenseHead').innerHTML=tableHead('Tipo d’attacco');$('offenseHead').innerHTML=tableHead('Tipo bersaglio');
+  const defense=D.types.map(attackType=>{
+    const values=team.map(p=>multiplier(attackType,pokemonTypes(p)));
+    const weak=values.filter(value=>value>1).length,resist=values.filter(value=>value>0&&value<1).length,immune=values.filter(value=>value===0).length;
+    const cells=values.map((value,i)=>`<td><span class="effect-badge ${effectClass(value)}" aria-label="${name(team[i].species)}: ${multiplierLabel(value)}">${multiplierLabel(value)}</span></td>`).join('');
+    return `<tr><th scope="row">${attackType}</th>${cells}<td class="team-balance"><span class="weak-count">${weak} deboli</span><span class="resist-count">${resist} resistono</span><span class="immune-count">${immune} immuni</span></td></tr>`;
+  }).join('');
+  $('defenseRows').innerHTML=defense;
+  const threatRows=D.types.map(attackType=>({type:attackType,count:team.filter(p=>multiplier(attackType,pokemonTypes(p))>1).length}));
+  const sharedThreats=threatRows.filter(row=>row.count>1);
+  $('defenseSummary').textContent=sharedThreats.length?`Debolezze condivise: ${sharedThreats.map(row=>`${row.type} (${row.count})`).join(' · ')}.`:'Nessun tipo d’attacco crea una debolezza condivisa.';
+  const offense=D.types.map(targetType=>{
+    const attacks=team.map(p=>strongestAttack(p,targetType));
+    const count=attacks.filter(entry=>entry&&entry.value>1).length;
+    const cells=attacks.map((entry,i)=>entry?`<td><span class="offense-matchup"><span class="effect-badge ${effectClass(entry.value)}" aria-label="${name(team[i].species)}: ${multiplierLabel(entry.value)} contro ${targetType}">${multiplierLabel(entry.value)}</span><small>${entry.move.name}${entry.stab?' · STAB':''}</small></span></td>`:'<td><span class="no-matchup">—</span></td>').join('');
+    return `<tr><th scope="row">${targetType}</th>${cells}<td class="team-balance"><span class="${count?'resist-count':'weak-count'}">${count}/6 Pokémon</span></td></tr>`;
+  }).join('');
+  $('offenseRows').innerHTML=offense;
+  const covered=D.types.filter(targetType=>team.some(p=>{const attack=strongestAttack(p,targetType);return attack&&attack.value>1;}));
+  const uncovered=D.types.filter(type=>!covered.includes(type));
+  $('offenseSummary').textContent=`Mosse superefficaci contro ${covered.length} tipi su ${D.types.length}.${uncovered.length?` Senza copertura superefficace: ${uncovered.join(', ')}.`:''}`;
+}
+function renderTeam(){ $('team').innerHTML=team.map((p,i)=>`<button class="slot${i===active?' active':''}" data-slot="${i}"><img src="${D.artwork[p.species]}" alt=""><span><strong>${i+1}. ${name(p.species)}</strong><small>Lv. ${p.level}<br>${p.moves.map(x=>move(x).name).join(' · ')}</small></span></button>`).join('');document.querySelectorAll('.slot').forEach(b=>b.onclick=()=>{active=+b.dataset.slot;render()});renderAnalysis()}
 function option(id,label){return `<option value="${id}">${String(id+1).padStart(3,'0')} - ${label}</option>`}function render(){const p=team[active],g=group();$('editTitle').textContent=`Slot ${active+1} - ${name(p.species)}`;$('hero').src=D.artwork[p.species];$('hero').alt=name(p.species);$('baseRental').innerHTML=g.rentals.map((r,i)=>option(i,name(r.species))).join('');$('baseRental').value=String(p.sourceIndex);$('speciesCombo').value=`${p.species} - ${name(p.species)}`;for(const [id,val] of Object.entries({level:p.level,experience:p.experience,ivAtk:p.ivs.atk,ivDef:p.ivs.def,ivSpe:p.ivs.spe,ivSpc:p.ivs.spc,seHp:p.statExp.hp,seAtk:p.statExp.atk,seDef:p.statExp.def,seSpe:p.statExp.spe,seSpc:p.statExp.spc}))$(id).value=val;$('moves').innerHTML=p.moves.map((mid,i)=>{const opts=legalMoves(p.species,mid).map(m=>`<option value="${m.id}"${m.id===mid?' selected':''}>${m.id} - ${m.name}</option>`).join(''),m=move(mid),acc=m.accuracy===255?100:Math.round(m.accuracy*100/255);return `<div class="move-card"><label>Mossa ${i+1}<select data-move="${i}">${opts}</select></label><div class="move-meta">${D.types[m.type]||'Tipo '+m.type} · ${category(m.type)} · Pot. ${m.power||'-'} · Prec. ${acc}% · PP ${m.pp}<br>${m.description||'Nessuna descrizione effetto disponibile.'}</div></div>`}).join('');document.querySelectorAll('[data-move]').forEach(s=>s.onchange=()=>{const i=+s.dataset.move,id=+s.value,ups=Number(p.pp?.[i]?.ups);p.moves[i]=id;p.pp[i]={ups:Number.isFinite(ups)?ups:3,current:Math.min(63,Math.floor(move(id).pp*(5+(Number.isFinite(ups)?ups:3))/5))};render()});calculate();renderTeam()}
 function resetCup(){team=group().rentals.slice(0,6).map(clone);active=0;render()}
+$("toggleAnalysis").onclick=()=>{const visible=$("teamAnalysis").hidden;$("teamAnalysis").hidden=!visible;$("toggleAnalysis").setAttribute('aria-expanded',String(visible));$("toggleAnalysis").textContent=visible?'Nascondi analisi':'Mostra analisi';if(visible)renderAnalysis()};
 function commitSpecies(){const m=$('speciesCombo').value.match(/^(\d{1,3})/),id=+(m?.[1]||0);if(id<1||id>151){$('speciesCombo').value=`${team[active].species} - ${name(team[active].species)}`;return}team[active].species=id;render()}
 $('speciesList').innerHTML=D.species.slice(1).map((n,i)=>`<option value="${i+1} - ${n}"></option>`).join('');$('cup').innerHTML=D.groups.map(g=>`<option value="${g.key}">${g.label}</option>`).join('');$('cup').onchange=resetCup;$('baseRental').onchange=()=>{team[active]=clone(group().rentals[+$('baseRental').value]);render()};$('speciesCombo').onchange=commitSpecies;
 const binds={level:['level'],experience:['experience'],ivAtk:['ivs','atk'],ivDef:['ivs','def'],ivSpe:['ivs','spe'],ivSpc:['ivs','spc'],seHp:['statExp','hp'],seAtk:['statExp','atk'],seDef:['statExp','def'],seSpe:['statExp','spe'],seSpc:['statExp','spc']};for(const [id,path] of Object.entries(binds))$(id).oninput=()=>{let o=team[active];for(let i=0;i<path.length-1;i++)o=o[path[i]];o[path[path.length-1]]=Math.max(0,+$(id).value||0);calculate();renderTeam()};$('duplicate').onclick=()=>{if(active<5){team[active+1]=clone(team[active]);active++;render()}};
